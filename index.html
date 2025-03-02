@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Komoot to Strava Sync</title>
+    <!-- MapLibre GL JS -->
+    <script src="https://unpkg.com/maplibre-gl@^5.1.1/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@^5.1.1/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        h1,
+        h2 {
+            color: #2d6e91;
+        }
+
+        .login-section {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .login-card {
+            flex: 1;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            background: #f9f9f9;
+        }
+
+        .credentials-form {
+            margin-top: 15px;
+        }
+
+        .form-group {
+            margin-bottom: 10px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: #fc4c02;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        button.komoot {
+            background-image: linear-gradient(to bottom, #8FCE3C, #6AA127);
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .activity-list {
+            margin-top: 30px;
+        }
+
+        .activity-item {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 25px;
+            background: white;
+        }
+
+        .activity-header {
+            display: flex;
+            margin-bottom: 15px;
+        }
+
+        .activity-title {
+            flex-grow: 1;
+        }
+
+        .activity-title input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+
+        .activity-details {
+            display: flex;
+            flex-wrap: wrap;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 15px;
+        }
+
+        .activity-details span {
+            margin-right: 15px;
+            margin-bottom: 5px;
+        }
+
+        .map-container {
+            height: 300px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .status {
+            color: #fc5200;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .connected-status {
+            display: flex;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #ccc;
+            margin-right: 8px;
+        }
+
+        .connected .status-indicator {
+            background-color: #4CAF50;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Komoot to Strava Sync</h1>
+
+    <div class="login-section">
+        <div class="login-card">
+            <h2>Komoot 💚</h2>
+            <p>Enter your Komoot credentials to fetch your latest activities.</p>
+
+            <div class="credentials-form" id="komoot-form">
+                <div class="form-group">
+                    <label for="komoot-user-id">User ID 🏷️</label>
+                    <input type="text" id="komoot-user-id" placeholder="123456789">
+                </div>
+                <div class="form-group">
+                    <label for="komoot-auth-cookie">Auth Cookie 🍪</label>
+                    <input type="text" id="komoot-auth-cookie"
+                        placeholder="kmt_sess=XXX==; kmt_sess.sig=XXX; kmt_rid=XXX; koa_re=XXX; koa_rt=XXX; koa_ae=1740913417; koa_at=XXX; _dd_s=rum=XXX">
+                </div>
+                <button id="komoot-login" class="komoot">Connect Komoot</button>
+            </div>
+
+            <div class="connected-status" id="komoot-connected">
+                <div class="status-indicator"></div>
+                <span>Not connected</span>
+            </div>
+        </div>
+
+        <div class="login-card">
+            <h2>Strava 🧡</h2>
+            <p>Enter your Strava API credentials to enable syncing your activities.</p>
+
+            <div class="credentials-form" id="strava-form">
+                <div class="form-group">
+                    <label for="strava-user-id">User ID 🏷️</label>
+                    <input type="text" id="strava-user-id" placeholder="12345678">
+                </div>
+                <div class="form-group">
+                    <label for="strava-client-id">Client ID 😏</label>
+                    <input type="text" id="strava-client-id" placeholder="12345">
+                </div>
+                <div class="form-group">
+                    <label for="strava-client-secret">Client Secret 🔑</label>
+                    <input type="password" id="strava-client-secret" placeholder="34x12345xx...">
+                </div>
+                <button id="strava-login">Connect Strava</button>
+            </div>
+
+            <div class="connected-status" id="strava-connected">
+                <div class="status-indicator"></div>
+                <span>Not connected</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading" class="loading hidden">Loading activities...</div>
+
+    <div id="activities-container" class="hidden">
+        <h2>Latest Komoot Activities</h2>
+        <p>Edit the titles below before syncing to Strava.</p>
+
+        <div id="activity-list" class="activity-list">
+            <!-- Activities will be populated here -->
+        </div>
+    </div>
+
+    <script>
+        // DOM elements
+        const komootLoginBtn = document.getElementById('komoot-login');
+        const stravaLoginBtn = document.getElementById('strava-login');
+        const komootConnectedStatus = document.getElementById('komoot-connected');
+        const stravaConnectedStatus = document.getElementById('strava-connected');
+        const activitiesContainer = document.getElementById('activities-container');
+        const activityList = document.getElementById('activity-list');
+        const loadingElem = document.getElementById('loading');
+    
+        // Credentials fields
+        const komootUserID = document.getElementById('komoot-user-id');
+        const komootAuthCookie = document.getElementById('komoot-auth-cookie');
+        const stravaUserId = document.getElementById('strava-user-id');
+        const stravaClientId = document.getElementById('strava-client-id');
+        const stravaClientSecret = document.getElementById('strava-client-secret');
+    
+        // State
+        let komootConnected = false;
+        let stravaConnected = false;
+        const maps = {};
+        let komootTours = [];
+    
+        // Check for saved credentials on page load
+        document.addEventListener('DOMContentLoaded', loadCredentials);
+    
+        // Event listeners
+        komootLoginBtn.addEventListener('click', connectKomoot);
+        stravaLoginBtn.addEventListener('click', connectStrava);
+    
+        // Functions
+        function loadCredentials() {
+            // Load Komoot credentials
+            const savedKomootUserID = localStorage.getItem('komootUserID');
+            const savedKomootAuthCookie = localStorage.getItem('komootAuthCookie');
+            
+            if (savedKomootUserID && savedKomootAuthCookie) {
+                komootUserID.value = savedKomootUserID;
+                komootAuthCookie.value = savedKomootAuthCookie;
+            }
+    
+            // Load Strava credentials
+            const savedStravaUserId = localStorage.getItem('stravaUserId');
+            const savedStravaClientId = localStorage.getItem('stravaClientId');
+            const savedStravaClientSecret = localStorage.getItem('stravaClientSecret');
+            
+            if (savedStravaClientId && savedStravaClientSecret) {
+                stravaUserId.value = savedStravaUserId || '';
+                stravaClientId.value = savedStravaClientId;
+                stravaClientSecret.value = savedStravaClientSecret;
+            }
+        }
+    
+        async function connectKomoot() {
+            // Save credentials to localStorage
+            localStorage.setItem('komootUserID', komootUserID.value);
+            localStorage.setItem('komootAuthCookie', komootAuthCookie.value);
+    
+            loadingElem.classList.remove('hidden');
+            updateConnectionStatus(komootConnectedStatus, false, "Connecting to Komoot...");
+    
+            try {
+                // Fetch Komoot tours data
+                await fetchKomootData();
+                
+                komootConnected = true;
+                updateConnectionStatus(komootConnectedStatus, true, "Connected to Komoot");
+                loadActivities();
+            } catch (error) {
+                console.error('Error connecting to Komoot:', error);
+                updateConnectionStatus(komootConnectedStatus, false, "Connection failed");
+            } finally {
+                loadingElem.classList.add('hidden');
+            }
+        }
+    
+        async function fetchKomootData() {
+            // In a real implementation, you would make API calls to Komoot here
+            // For demo purposes, we'll load data from the local JSON file
+            console.log('Fetching Komoot data... (simulated)');
+            
+            // NOTE: In a production app, this would be a server-side request
+            // Here we're simulating the data that would be returned
+            const userId = komootUserID.value;
+            
+            // This is a placeholder for demonstration purposes
+            // In production, you'd use a proper proxy server to make these requests with authentication
+            try {
+                // For demonstration purposes, we're using the pre-fetched JSON data
+                komootTours = await fetchMockKomootData();
+                return komootTours;
+            } catch (error) {
+                console.error("Error fetching Komoot data:", error);
+                throw error;
+            }
+        }
+        
+        // This function simulates fetching data from the Komoot API
+        // In a real app, this would be a server-side API call with proper authentication
+        async function fetchMockKomootData() {
+            // In a real implementation, this would be an API call
+            // For this demo, we'll extract data from the all_tours.json structure we have
+            
+            // Sample data structure based on the provided all_tours.json
+            const mockResponse = {
+                "_embedded": {
+                    "items": [
+                        {
+                            "status": "private",
+                            "sport": "mtb_easy",
+                            "id": "2075678315",
+                            "type": "tour_recorded",
+                            "name": "From Neukölln to Biesenthal",
+                            "distance": 110653.03938178193,
+                            "duration": 35610,
+                            "date": "2025-03-01T10:20:52.979+01:00",
+                            "changed_at": "2025-03-01T19:15:32.698Z",
+                            "start_point": {
+                                "lat": 52.486507,
+                                "lng": 13.443725,
+                                "alt": 103.2
+                            },
+                            "time_in_motion": 19986,
+                            "elevation_up": 1130.1562950406978,
+                            "elevation_down": 1140.6576742412637,
+                            "_links": {
+                                "coordinates": {
+                                    "href": "https://api.komoot.de/v007/tours/2075678315/coordinates"
+                                },
+                                "tour_line": {
+                                    "href": "https://api.komoot.de/v007/tours/2075678315/tour_line"
+                                }
+                            }
+                        },
+                        {
+                            "status": "private",
+                            "sport": "touringbicycle",
+                            "id": "2071409171",
+                            "type": "tour_recorded",
+                            "name": "From Heinersdorf to Neukölln",
+                            "distance": 23112.51292836026,
+                            "duration": 15565,
+                            "date": "2025-02-26T14:40:19.662+01:00",
+                            "changed_at": "2025-02-26T18:01:02.749Z",
+                            "start_point": {
+                                "lat": 52.374328,
+                                "lng": 13.319185, 
+                                "alt": 49.7
+                            },
+                            "time_in_motion": 4313,
+                            "elevation_up": 271.71983514788104, 
+                            "elevation_down": 297.0925828640924,
+                            "_links": {
+                                "coordinates": {
+                                    "href": "https://api.komoot.de/v007/tours/2071409171/coordinates"
+                                },
+                                "tour_line": {
+                                    "href": "https://api.komoot.de/v007/tours/2071409171/tour_line"
+                                }
+                            }
+                        }
+                    ]
+                }
+            };
+            
+            // Extract relevant tour information
+            return mockResponse._embedded.items.map(tour => {
+                // Convert distance to km
+                const distanceKm = (tour.distance / 1000).toFixed(1);
+                
+                // Format duration
+                const durationHours = Math.floor(tour.duration / 3600);
+                const durationMinutes = Math.floor((tour.duration % 3600) / 60);
+                const formattedDuration = durationHours > 0 
+                    ? `${durationHours}h ${durationMinutes}m` 
+                    : `${durationMinutes}m`;
+                
+                // Format date
+                const tourDate = new Date(tour.date);
+                const formattedDate = tourDate.toLocaleDateString();
+                
+                // Determine activity type based on sport
+                let activityType;
+                switch(tour.sport) {
+                    case 'mtb_easy':
+                    case 'mtb':
+                    case 'mtb_advanced': 
+                        activityType = 'Mountain Biking';
+                        break;
+                    case 'touringbicycle':
+                    case 'racebike':
+                        activityType = 'Cycling';
+                        break;
+                    case 'hike':
+                        activityType = 'Hiking';
+                        break;
+                    case 'running':
+                        activityType = 'Running';
+                        break;
+                    default:
+                        activityType = 'Activity';
+                }
+                
+                // Generate mock route data for map display
+                // In a real app, you would fetch this from the coordinates endpoint
+                const route = generateMockRouteFromStartPoint(tour.start_point);
+                
+                return {
+                    id: tour.id,
+                    title: tour.name,
+                    date: formattedDate,
+                    type: activityType,
+                    distance: `${distanceKm} km`,
+                    duration: formattedDuration,
+                    elevationGain: `${Math.round(tour.elevation_up)}m`,
+                    elevationLoss: `${Math.round(tour.elevation_down)}m`,
+                    startPoint: tour.start_point,
+                    route: route
+                };
+            });
+        }
+        
+        function generateMockRouteFromStartPoint(startPoint) {
+            // Generate a few points around the start point for a mock route
+            // In a real app, this would come from the actual GPS data
+            const route = [];
+            const lat = startPoint.lat;
+            const lng = startPoint.lng;
+            
+            // Add start point
+            route.push([lng, lat]);
+            
+            // Add a few random points (simple random walk)
+            for (let i = 0; i < 6; i++) {
+                const latOffset = (Math.random() - 0.5) * 0.02;
+                const lngOffset = (Math.random() - 0.5) * 0.02;
+                route.push([lng + lngOffset, lat + latOffset]);
+            }
+            
+            return route;
+        }
+    
+        function connectStrava() {
+            // Save credentials to localStorage
+            localStorage.setItem('stravaUserId', stravaUserId.value);
+            localStorage.setItem('stravaClientId', stravaClientId.value);
+            localStorage.setItem('stravaClientSecret', stravaClientSecret.value);
+    
+            updateConnectionStatus(stravaConnectedStatus, false, "Connecting to Strava...");
+    
+            // Simulate API connection
+            setTimeout(() => {
+                stravaConnected = true;
+                updateConnectionStatus(stravaConnectedStatus, true, "Connected to Strava");
+    
+                checkBothConnected();
+            }, 1500);
+        }
+    
+        function updateConnectionStatus(element, isConnected, message) {
+            if (isConnected) {
+                element.classList.add('connected');
+            } else {
+                element.classList.remove('connected');
+            }
+            element.querySelector('span').textContent = message || "Not connected";
+        }
+    
+    
+        function loadActivities() {
+            // Clear existing activities
+            activityList.innerHTML = '';
+
+            activitiesContainer.classList.remove('hidden');
+    
+            // Create activity elements from the real Komoot data
+            komootTours.forEach(activity => {
+                const activityItem = document.createElement('div');
+                activityItem.className = 'activity-item';
+    
+                // Create a container for the map
+                const mapId = `map-${activity.id}`;
+    
+                activityItem.innerHTML = `
+                    <div class="activity-header">
+                        <div class="activity-title">
+                            <input type="text" value="${activity.title}" placeholder="Activity title">
+                        </div>
+                    </div>
+                    <div class="activity-details">
+                        <span><strong>Date:</strong> ${activity.date}</span>
+                        <span><strong>Type:</strong> ${activity.type}</span>
+                        <span><strong>Distance:</strong> ${activity.distance}</span>
+                        <span><strong>Duration:</strong> ${activity.duration}</span>
+                        <span><strong>Elevation gain:</strong> ${activity.elevationGain}</span>
+                        <span><strong>Elevation loss:</strong> ${activity.elevationLoss}</span>
+                    </div>
+                    <div id="${mapId}" class="map-container"></div>
+                    <button class="sync-button" data-id="${activity.id}">Sync to Strava</button>
+                    <div class="status" id="sync-status-${activity.id}"></div>
+                `;
+    
+                activityList.appendChild(activityItem);
+    
+                // Initialize map after DOM element is added
+                initMap(mapId, activity.route);
+    
+                // Add event listener to sync button
+                const syncButton = activityItem.querySelector('.sync-button');
+                syncButton.addEventListener('click', () => {
+                    syncToStrava(
+                        activity.id,
+                        activityItem.querySelector('input').value
+                    );
+                });
+            });
+        }
+    
+        function initMap(mapId, routeCoordinates) {
+            // Use OpenStreetMap as the base map since we're showing in MapLibre
+            const map = new maplibregl.Map({
+                container: mapId,
+                style: 'https://tiles.openfreemap.org/styles/fiord',
+                center: routeCoordinates[0],
+                zoom: 12
+            });
+    
+            // Store map reference
+            maps[mapId] = map;
+    
+            map.on('load', function () {
+                // Add the route line
+                map.addSource('route', {
+                    'type': 'geojson',
+                    'data': {
+                        'type': 'Feature',
+                        'properties': {},
+                        'geometry': {
+                            'type': 'LineString',
+                            'coordinates': routeCoordinates
+                        }
+                    }
+                });
+    
+                map.addLayer({
+                    'id': 'route',
+                    'type': 'line',
+                    'source': 'route',
+                    'layout': {
+                        'line-join': 'round',
+                        'line-cap': 'round'
+                    },
+                    'paint': {
+                        'line-color': '#006B68',
+                        'line-width': 4
+                    }
+                });
+    
+                // Add start point
+                map.addSource('start-point', {
+                    'type': 'geojson',
+                    'data': {
+                        'type': 'Feature',
+                        'properties': {},
+                        'geometry': {
+                            'type': 'Point',
+                            'coordinates': routeCoordinates[0]
+                        }
+                    }
+                });
+    
+                map.addLayer({
+                    'id': 'start-point',
+                    'type': 'circle',
+                    'source': 'start-point',
+                    'paint': {
+                        'circle-radius': 6,
+                        'circle-color': '#3bb2d0'
+                    }
+                });
+    
+                // Add end point
+                map.addSource('end-point', {
+                    'type': 'geojson',
+                    'data': {
+                        'type': 'Feature',
+                        'properties': {},
+                        'geometry': {
+                            'type': 'Point',
+                            'coordinates': routeCoordinates[routeCoordinates.length - 1]
+                        }
+                    }
+                });
+    
+                map.addLayer({
+                    'id': 'end-point',
+                    'type': 'circle',
+                    'source': 'end-point',
+                    'paint': {
+                        'circle-radius': 6,
+                        'circle-color': '#f30'
+                    }
+                });
+    
+                // Fit bounds to show the entire route
+                const bounds = new maplibregl.LngLatBounds();
+                routeCoordinates.forEach(coord => bounds.extend(coord));
+                map.fitBounds(bounds, { padding: 50 });
+            });
+        }
+    
+        async function syncToStrava(activityId, title) {
+            if (!stravaConnected) {
+                alert("Please connect to Strava first");
+                return;
+            }
+    
+            const statusElem = document.getElementById(`sync-status-${activityId}`);
+            statusElem.textContent = "Syncing...";
+    
+            try {
+                // In a real app, this would be a fetch to your server endpoint
+                // that handles the GPX download and Strava upload
+                
+                // 1. Get the GPX file from Komoot
+                // const gpxData = await downloadGPX(activityId);
+                
+                // 2. Upload to Strava
+                // await uploadToStrava(gpxData, title);
+                
+                // Simulate successful API sync
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                
+                statusElem.textContent = "Successfully synced to Strava!";
+                console.log(`Synced activity ${activityId} with title "${title}" to Strava`);
+    
+                // Log the credentials that would be used (from localStorage)
+                console.log("Using stored Strava credentials:", {
+                    clientId: localStorage.getItem('stravaClientId'),
+                    clientSecret: "********" // Don't log actual secret
+                });
+            } catch (error) {
+                console.error('Error syncing to Strava:', error);
+                statusElem.textContent = "Error: " + error.message;
+            }
+        }
+        
+        // This function would download the GPX file from Komoot
+        // In a real app, this would be handled by your server
+        async function downloadGPX(tourId) {
+            const userId = komootUserID.value;
+            const authCookie = komootAuthCookie.value;
+            
+            // This is just a placeholder - in a real app this would be a server endpoint
+            // that makes the authenticated request to Komoot API
+            const response = await fetch(`/api/komoot/gpx/${tourId}`, {
+                headers: {
+                    'Authorization': `Bearer ${authCookie}`
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to download GPX');
+            }
+            
+            return await response.text();
+        }
+        
+        // This function would upload the GPX data to Strava
+        // In a real app, this would be handled by your server
+        async function uploadToStrava(gpxData, title) {
+            const clientId = stravaClientId.value;
+            const clientSecret = stravaClientSecret.value;
+            
+            // This is just a placeholder - in a real app this would be a server endpoint
+            // that handles the Strava API authentication and upload
+            const response = await fetch('/api/strava/upload', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    title,
+                    gpxData,
+                    clientId,
+                    clientSecret
+                })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to upload to Strava');
+            }
+            
+            return await response.json();
+        }
+    </script>
+
+</body>
+
+</html>
