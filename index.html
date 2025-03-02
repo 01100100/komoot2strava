@@ -180,10 +180,11 @@
                 </div>
                 <div class="form-group">
                     <label for="komoot-auth-cookie">Auth Cookie 🍪</label>
-                    <input type="text" id="komoot-auth-cookie"
+                    <input type="password" id="komoot-auth-cookie"
                         placeholder="kmt_sess=XXX==; kmt_sess.sig=XXX; kmt_rid=XXX; koa_re=XXX; koa_rt=XXX; koa_ae=1740913417; koa_at=XXX; _dd_s=rum=XXX">
                     <p style="margin-top: 5px; font-size: 12px; color: #666; font-style: italic;">
-                        Optional: Only needed to access private tours. Without this, only public activities will be displayed.
+                        Optional: Only needed to access private tours. Without this, only public activities will be
+                        displayed.
                     </p>
                 </div>
                 <button id="komoot-login" class="komoot">Connect Komoot</button>
@@ -201,16 +202,8 @@
 
             <div class="credentials-form" id="strava-form">
                 <div class="form-group">
-                    <label for="strava-user-id">User ID 🏷️</label>
-                    <input type="text" id="strava-user-id" placeholder="12345678">
-                </div>
-                <div class="form-group">
-                    <label for="strava-client-id">Client ID 😏</label>
-                    <input type="text" id="strava-client-id" placeholder="12345">
-                </div>
-                <div class="form-group">
-                    <label for="strava-client-secret">Client Secret 🔑</label>
-                    <input type="password" id="strava-client-secret" placeholder="34x12345xx...">
+                    <label for="strava-access-token">Access token 🔑</label>
+                    <input type="password" id="strava-access-token" placeholder="34x12345xx...">
                 </div>
                 <button id="strava-login">Connect Strava</button>
             </div>
@@ -226,10 +219,8 @@
 
     <div id="activities-container" class="hidden">
         <h2>Latest Komoot Activities</h2>
-        <p>Edit the titles below before syncing to Strava.</p>
-
         <div id="activity-list" class="activity-list">
-            <!-- Activities will be populated here -->
+            <!-- Activities will go here -->
         </div>
     </div>
 
@@ -246,9 +237,9 @@
         // Credentials fields
         const komootUserID = document.getElementById('komoot-user-id');
         const komootAuthCookie = document.getElementById('komoot-auth-cookie');
-        const stravaUserId = document.getElementById('strava-user-id');
-        const stravaClientId = document.getElementById('strava-client-id');
-        const stravaClientSecret = document.getElementById('strava-client-secret');
+        // const stravaUserId = document.getElementById('strava-user-id');
+        // const stravaClientId = document.getElementById('strava-client-id');
+        const stravaClientSecret = document.getElementById('strava-access-token');
 
         // State
         let komootConnected = false;
@@ -275,32 +266,23 @@
             // Load Komoot credentials - individually check each field
             const savedKomootUserID = localStorage.getItem('komootUserID');
             const savedKomootAuthCookie = localStorage.getItem('komootAuthCookie');
-        
+
             if (savedKomootUserID) {
                 komootUserID.value = savedKomootUserID;
             }
-            
+
             if (savedKomootAuthCookie) {
                 komootAuthCookie.value = savedKomootAuthCookie;
             }
-        
+
             // Load Strava credentials - individually check each field
-            const savedStravaUserId = localStorage.getItem('stravaUserId');
-            const savedStravaClientId = localStorage.getItem('stravaClientId');
             const savedStravaClientSecret = localStorage.getItem('stravaClientSecret');
-        
-            if (savedStravaUserId) {
-                stravaUserId.value = savedStravaUserId;
-            }
-            
-            if (savedStravaClientId) {
-                stravaClientId.value = savedStravaClientId;
-            }
-            
+
+
             if (savedStravaClientSecret) {
                 stravaClientSecret.value = savedStravaClientSecret;
             }
-            
+
             console.log('Credentials loaded from localStorage');
         }
 
@@ -336,22 +318,49 @@
             }
         }
 
+
         function connectStrava() {
             // Save credentials to localStorage
-            localStorage.setItem('stravaUserId', stravaUserId.value);
-            localStorage.setItem('stravaClientId', stravaClientId.value);
             localStorage.setItem('stravaClientSecret', stravaClientSecret.value);
 
             updateConnectionStatus(stravaConnectedStatus, false, "Connecting to Strava...");
 
-            // Simulate API connection
-            setTimeout(() => {
-                stravaConnected = true;
-                updateConnectionStatus(stravaConnectedStatus, true, "Connected to Strava");
+            // Use the Access token field for the personal access token
+            stravaAccessToken = stravaClientSecret.value;
 
-                checkBothConnected();
-            }, 1500);
+            if (!stravaAccessToken) {
+                updateConnectionStatus(stravaConnectedStatus, false, "Access token required in Access token field");
+                return;
+            }
+
+            // Test the token by making a simple API request
+            fetch('https://www.strava.com/api/v3/athlete', {
+                headers: {
+                    'Authorization': `Bearer ${stravaAccessToken}`
+                }
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Invalid token: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Connected to Strava as:', data.firstname, data.lastname);
+                    stravaConnected = true;
+
+                    // Store the token in localStorage
+                    localStorage.setItem('stravaAccessToken', stravaAccessToken);
+
+                    updateConnectionStatus(stravaConnectedStatus, true, `Connected as ${data.firstname} ${data.lastname}`);
+                    checkBothConnected();
+                })
+                .catch(error => {
+                    console.error('Error validating Strava token:', error);
+                    updateConnectionStatus(stravaConnectedStatus, false, "Invalid token - use personal access token");
+                });
         }
+
 
         function updateConnectionStatus(element, isConnected, message) {
             if (isConnected) {
@@ -477,16 +486,28 @@
                             activityType = 'Activity';
                     }
 
-                    // Create GPX download URL
+                    // Create GPX download URL and Strava activity type mapping
                     const gpxUrl = `https://www.komoot.com/api/v007/tours/${tour.id}.gpx?hl=en`;
-
-                    // Download GPX data
-                    const gpxResponse = await fetch(gpxUrl, {
-                        headers: {
-                            'Cookie': komootAuthCookie.value,
-                            'Accept': 'application/gpx+xml'
-                        }
-                    });
+                    let stravaActivityType;
+                    switch (tour.sport) {
+                        case 'mtb_easy':
+                        case 'mtb':
+                        case 'mtb_advanced':
+                            stravaActivityType = 'MountainBikeRide';
+                            break;
+                        case 'touringbicycle':
+                        case 'racebike':
+                            stravaActivityType = 'Ride';
+                            break;
+                        case 'hike':
+                            stravaActivityType = 'Hike';
+                            break;
+                        case 'running':
+                            stravaActivityType = 'Run';
+                            break;
+                        default:
+                            stravaActivityType = 'Workout';
+                    }
 
                     // Create GeoJSON from GPX
                     let routeGeoJSON = {
@@ -506,28 +527,45 @@
                         ]
                     };
 
-                    // Extract coordinates from GPX if available
-                    if (gpxResponse.ok) {
-                        const gpxText = await gpxResponse.text();
+                    // Download GPX data - we'll store the raw data to reuse when syncing to Strava
+                    let rawGpxData = null;
 
-                        // Parse the GPX XML
-                        const parser = new DOMParser();
-                        const gpxDoc = parser.parseFromString(gpxText, "text/xml");
-
-                        // Extract trackpoints
-                        const trackPoints = gpxDoc.querySelectorAll('trkpt');
-
-                        // Add coordinates to GeoJSON
-                        routeGeoJSON.features[0].geometry.coordinates = Array.from(trackPoints).map(point => {
-                            const lon = parseFloat(point.getAttribute('lon'));
-                            const lat = parseFloat(point.getAttribute('lat'));
-                            return [lon, lat]; // MapLibre expects [longitude, latitude] format
+                    try {
+                        const gpxResponse = await fetch(gpxUrl, {
+                            headers: {
+                                'Cookie': komootAuthCookie.value,
+                                'Accept': 'application/gpx+xml'
+                            }
                         });
 
-                        console.log(`Extracted ${routeGeoJSON.features[0].geometry.coordinates.length} points from GPX`);
-                    } else {
+                        // Extract coordinates from GPX if available
+                        if (gpxResponse.ok) {
+                            rawGpxData = await gpxResponse.text();
+
+                            // Parse the GPX XML
+                            const parser = new DOMParser();
+                            const gpxDoc = parser.parseFromString(rawGpxData, "text/xml");
+
+                            // Extract trackpoints for map display
+                            const trackPoints = gpxDoc.querySelectorAll('trkpt');
+
+                            // Add coordinates to GeoJSON
+                            routeGeoJSON.features[0].geometry.coordinates = Array.from(trackPoints).map(point => {
+                                const lon = parseFloat(point.getAttribute('lon'));
+                                const lat = parseFloat(point.getAttribute('lat'));
+                                return [lon, lat]; // MapLibre expects [longitude, latitude] format
+                            });
+
+                            console.log(`Extracted ${routeGeoJSON.features[0].geometry.coordinates.length} points from GPX`);
+                        } else {
+                            // Fallback to start point if GPX fetch fails
+                            console.log('Failed to fetch GPX, using start point only');
+                            const { lng, lat } = tour.start_point;
+                            routeGeoJSON.features[0].geometry.coordinates = [[lng, lat]];
+                        }
+                    } catch (error) {
+                        console.error(`Error downloading GPX for tour ${tour.id}:`, error);
                         // Fallback to start point if GPX fetch fails
-                        console.log('Failed to fetch GPX, using start point only');
                         const { lng, lat } = tour.start_point;
                         routeGeoJSON.features[0].geometry.coordinates = [[lng, lat]];
                     }
@@ -536,8 +574,9 @@
                         id: tour.id,
                         title: tour.name,
                         date: formattedDate,
-                        dateObj: tourDate, // Store actual date object for proper sorting
+                        dateObj: tourDate,
                         type: activityType,
+                        stravaType: stravaActivityType,
                         distance: `${distanceKm} km`,
                         duration: formattedDuration,
                         motionTime: formattedMotionTime,
@@ -547,6 +586,7 @@
                         startPoint: tour.start_point,
                         routeGeoJSON: routeGeoJSON,
                         gpxUrl: gpxUrl,
+                        gpxData: rawGpxData, // Store the raw GPX data
                         mapImageUrl: tour.vector_map_image?.src
                     };
                 }));
@@ -559,23 +599,53 @@
             }
         }
 
-        function generateRouteFromStartPoint(startPoint) {
-            // Generate points around the start point for a simple route preview
-            const route = [];
-            const lat = startPoint.lat;
-            const lng = startPoint.lng;
 
-            // Add start point
-            route.push([lng, lat]);
+        async function checkUploadStatus(uploadId, statusElem) {
+            // Poll the upload status until it completes or fails
+            let attempts = 0;
+            const maxAttempts = 10;
 
-            // Add a few random points to simulate a route
-            for (let i = 0; i < 6; i++) {
-                const latOffset = (Math.random() - 0.5) * 0.02;
-                const lngOffset = (Math.random() - 0.5) * 0.02;
-                route.push([lng + lngOffset, lat + latOffset]);
+            while (attempts < maxAttempts) {
+                attempts++;
+                try {
+                    const statusResponse = await fetch(`https://www.strava.com/api/v3/uploads/${uploadId}`, {
+                        headers: {
+                            'Authorization': `Bearer ${stravaAccessToken}`
+                        }
+                    });
+
+                    const statusData = await statusResponse.json();
+
+                    if (statusData.error) {
+                        statusElem.textContent = `Error: ${statusData.error}`;
+                        return;
+                    }
+
+                    if (statusData.status === 'Your activity is ready.') {
+                        statusElem.textContent = "Successfully uploaded to Strava!";
+                        if (statusData.activity_id) {
+                            const viewLink = document.createElement('a');
+                            viewLink.href = `https://www.strava.com/activities/${statusData.activity_id}`;
+                            viewLink.textContent = "View on Strava";
+                            viewLink.target = "_blank";
+                            viewLink.style.marginLeft = "10px";
+                            statusElem.appendChild(viewLink);
+                        }
+                        return;
+                    }
+
+                    statusElem.textContent = `Processing: ${statusData.status || 'In progress...'}`;
+
+                    // Wait before checking again
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                } catch (error) {
+                    console.error('Error checking upload status:', error);
+                    statusElem.textContent = "Error checking status: " + error.message;
+                    return;
+                }
             }
 
-            return route;
+            statusElem.textContent = "Upload in progress. Check Strava for final status.";
         }
 
         // ============================
@@ -584,7 +654,6 @@
         function loadActivities() {
             // Clear existing activities
             activityList.innerHTML = '';
-
             activitiesContainer.classList.remove('hidden');
 
             // Create activity elements from the Komoot data
@@ -700,54 +769,84 @@
                 return;
             }
 
+            // Find the activity by ID
+            const activity = komootTours.find(tour => tour.id === activityId);
+            if (!activity) {
+                alert("Activity not found");
+                return;
+            }
+
             const statusElem = document.getElementById(`sync-status-${activityId}`);
-            statusElem.textContent = "Syncing...";
+            statusElem.textContent = "Preparing to sync...";
 
             try {
-                // Get GPX URL for the activity
-                const gpxUrl = `https://www.komoot.com/api/v007/tours/${activityId}.gpx?hl=en`;
+                let gpxData = activity.gpxData;
 
-                // Attempt to download GPX from Komoot
-                statusElem.textContent = "Downloading GPX...";
+                // If we don't have GPX data stored, try to download it again
+                if (!gpxData) {
+                    statusElem.textContent = "Downloading GPX...";
+                    try {
+                        const gpxResponse = await fetch(activity.gpxUrl, {
+                            headers: {
+                                'Cookie': komootAuthCookie.value,
+                                'Accept': 'application/gpx+xml'
+                            }
+                        });
 
-                try {
-                    // Direct access will likely fail due to CORS, but try anyway
-                    const gpxResponse = await fetch(gpxUrl, {
-                        headers: {
-                            'Cookie': komootAuthCookie.value,
-                            'Accept': 'application/gpx+xml'
+                        if (gpxResponse.ok) {
+                            gpxData = await gpxResponse.text();
+                            console.log(`Downloaded GPX data (${gpxData.length} bytes)`);
+                        } else {
+                            throw new Error("Failed to download GPX");
                         }
-                    });
-
-                    if (gpxResponse.ok) {
-                        const gpxData = await gpxResponse.text();
-                        statusElem.textContent = "GPX downloaded, uploading to Strava...";
-
-                        // In a real implementation, you would upload to Strava here
-                        console.log(`Downloaded GPX data (${gpxData.length} bytes)`);
-                    } else {
-                        throw new Error("Failed to download GPX");
+                    } catch (gpxError) {
+                        console.error('GPX download error:', gpxError);
+                        statusElem.textContent = "GPX download failed. Check browser console for details.";
+                        return;
                     }
-                } catch (gpxError) {
-                    console.error('GPX download error:', gpxError);
-                    statusElem.textContent = "Direct GPX download failed (CORS)...";
-
-                    // In a real app, this would be done by your backend
-                    console.log(`GPX URL that should be used: ${gpxUrl}`);
                 }
 
-                // Simulate successful upload after a delay
-                await new Promise(resolve => setTimeout(resolve, 1500));
+                // Upload to Strava
+                statusElem.textContent = "Uploading to Strava...";
 
-                statusElem.textContent = "Successfully synced to Strava!";
-                console.log(`Activity ${activityId} ("${title}") would be synced to Strava`);
-                console.log(`Strava user ID: ${stravaUserId.value}`);
-                console.log(`Using client ID: ${stravaClientId.value}`);
+                // Create form data for upload
+                const formData = new FormData();
+                formData.append('file', new Blob([gpxData], { type: 'application/gpx+xml' }), `komoot_${activityId}.gpx`);
+                formData.append('name', title);
+                formData.append('data_type', 'gpx');
+                formData.append('external_id', `komoot_${activityId}`);
+                formData.append('activity_type', activity.stravaType);
+
+                // Upload to Strava API
+                const uploadResponse = await fetch('https://www.strava.com/api/v3/uploads', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${stravaAccessToken}`
+                    },
+                    body: formData
+                });
+
+                const uploadResult = await uploadResponse.json();
+
+                if (uploadResponse.ok) {
+                    // Handle successful response
+                    if (uploadResult.error) {
+                        statusElem.textContent = `Error: ${uploadResult.error}`;
+                    } else {
+                        statusElem.textContent = "Upload accepted! Processing...";
+
+                        // Poll for processing status
+                        await checkUploadStatus(uploadResult.id, statusElem);
+                    }
+                } else {
+                    throw new Error(`Upload failed: ${uploadResult.message || 'Unknown error'}`);
+                }
             } catch (error) {
                 console.error('Error syncing to Strava:', error);
                 statusElem.textContent = "Error: " + error.message;
             }
         }
+
     </script>
 
 </body>
