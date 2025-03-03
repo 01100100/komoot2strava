@@ -19,7 +19,8 @@
             box-sizing: border-box;
         }
 
-        h1, h2 {
+        h1,
+        h2 {
             color: #2d6e91;
         }
 
@@ -178,7 +179,7 @@
         .connected .status-indicator {
             background-color: #4CAF50;
         }
-        
+
         .limited-note {
             text-align: center;
             color: #666;
@@ -186,39 +187,39 @@
             margin-top: 10px;
             padding: 0 15px;
         }
-        
+
         /* Media Queries for Responsive Design */
         @media (max-width: 768px) {
             .login-section {
                 flex-direction: column;
             }
-            
+
             .activity-details span {
                 flex-basis: 100%;
             }
-            
+
             .map-container {
                 height: 250px;
             }
         }
-        
+
         @media (max-width: 480px) {
             body {
                 padding: 10px;
             }
-            
+
             .login-card {
                 padding: 12px;
             }
-            
+
             .activity-item {
                 padding: 12px;
             }
-            
+
             .map-container {
                 height: 200px;
             }
-            
+
             .activity-details {
                 font-size: 13px;
             }
@@ -259,12 +260,15 @@
 
         <div class="login-card">
             <h2>Strava 🧡</h2>
-            <p>Enter your Strava API credentials to enable syncing your activities.</p>
+            <p>Enter your Strava refresh token to enable syncing your activities.</p>
 
             <div class="credentials-form" id="strava-form">
                 <div class="form-group">
-                    <label for="strava-access-token">Access token 🔑</label>
-                    <input type="password" id="strava-access-token" placeholder="34x12345xx...">
+                    <label for="strava-refresh-token">Refresh token 🔐</label>
+                    <input type="password" id="strava-refresh-token" placeholder="Enter your Strava refresh token">
+                    <p style="margin-top: 5px; font-size: 12px; color: #666; font-style: italic;">
+                        Get your refresh token from Kreuzungen World or Strava API settings
+                    </p>
                 </div>
                 <button id="strava-login">Connect Strava</button>
             </div>
@@ -298,12 +302,12 @@
         // Credentials fields
         const komootUserID = document.getElementById('komoot-user-id');
         const komootAuthCookie = document.getElementById('komoot-auth-cookie');
-        // const stravaUserId = document.getElementById('strava-user-id');
-        // const stravaClientId = document.getElementById('strava-client-id');
-        const stravaClientSecret = document.getElementById('strava-access-token');
+        const stravaRefreshToken = document.getElementById('strava-refresh-token');
 
         // State
         let komootConnected = false;
+        let stravaAccessToken = '';
+        let stravaTokenExpiry = 0;
         let stravaConnected = false;
         const maps = {};
         let komootTours = [];
@@ -322,7 +326,6 @@
         // ============================
         // AUTHENTICATION FUNCTIONS
         // ============================
-
         function loadCredentials() {
             // Load Komoot credentials - individually check each field
             const savedKomootUserID = localStorage.getItem('komootUserID');
@@ -336,12 +339,25 @@
                 komootAuthCookie.value = savedKomootAuthCookie;
             }
 
-            // Load Strava credentials - individually check each field
-            const savedStravaClientSecret = localStorage.getItem('stravaClientSecret');
+            // Load Strava credentials
+            const savedStravaRefreshToken = localStorage.getItem('stravaRefreshToken');
 
+            if (savedStravaRefreshToken) {
+                stravaRefreshToken.value = savedStravaRefreshToken;
+            }
 
-            if (savedStravaClientSecret) {
-                stravaClientSecret.value = savedStravaClientSecret;
+            // Try to restore Strava connection if we have a refresh token
+            const savedStravaAccessToken = localStorage.getItem('stravaAccessToken');
+            const savedTokenExpiry = localStorage.getItem('stravaTokenExpiry');
+
+            if (savedStravaRefreshToken && savedStravaAccessToken && savedTokenExpiry) {
+                stravaAccessToken = savedStravaAccessToken;
+                stravaTokenExpiry = parseInt(savedTokenExpiry);
+
+                // Check if token is still valid (with 5 min buffer)
+                if (Date.now() < stravaTokenExpiry - 300000) {
+                    verifyStravaToken();
+                }
             }
 
             console.log('Credentials loaded from localStorage');
@@ -379,48 +395,109 @@
             }
         }
 
-
-        function connectStrava() {
-            // Save credentials to localStorage
-            localStorage.setItem('stravaClientSecret', stravaClientSecret.value);
+        async function connectStrava() {
+            // Save refresh token to localStorage
+            localStorage.setItem('stravaRefreshToken', stravaRefreshToken.value);
 
             updateConnectionStatus(stravaConnectedStatus, false, "Connecting to Strava...");
 
-            // Use the Access token field for the personal access token
-            stravaAccessToken = stravaClientSecret.value;
+            try {
+                await refreshStravaToken();
+                await verifyStravaToken();
+            } catch (error) {
+                console.error('Error connecting to Strava:', error);
+                updateConnectionStatus(stravaConnectedStatus, false, "Connection failed: Invalid refresh token");
+            }
+        }
 
-            if (!stravaAccessToken) {
-                updateConnectionStatus(stravaConnectedStatus, false, "Access token required in Access token field");
-                return;
+        // Function to refresh the Strava token using Kreuzungen service
+        async function refreshStravaToken() {
+            const refreshToken = stravaRefreshToken.value;
+
+            if (!refreshToken) {
+                throw new Error('Strava refresh token is required');
             }
 
-            // Test the token by making a simple API request
-            fetch('https://www.strava.com/api/v3/athlete', {
-                headers: {
-                    'Authorization': `Bearer ${stravaAccessToken}`
-                }
-            })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`Invalid token: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    console.log('Connected to Strava as:', data.firstname, data.lastname);
-                    stravaConnected = true;
+            try {
+                console.log(refreshToken)
 
-                    // Store the token in localStorage
-                    localStorage.setItem('stravaAccessToken', stravaAccessToken);
-
-                    updateConnectionStatus(stravaConnectedStatus, true, `Connected as ${data.firstname} ${data.lastname}`);
-                    checkBothConnected();
-                })
-                .catch(error => {
-                    console.error('Error validating Strava token:', error);
-                    updateConnectionStatus(stravaConnectedStatus, false, "Invalid token - use personal access token");
+                // Exchange refresh token for access token via Kreuzungen
+                const response = await fetch('https://auth.kreuzungen.world/reoauth', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': '*/*',
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `refreshToken=${refreshToken}`,
                 });
+
+                if (!response.ok) {
+                    console.error(`Token refresh failed with status: ${response.status}`);
+                    const errorText = await response.text();
+                    console.error(`Response body: ${errorText}`);
+                    throw new Error(`Failed to refresh token: ${response.status} ${response.statusText}`);
+                }
+
+                const tokenData = await response.json();
+                console.log("Token response:", JSON.stringify(tokenData));
+
+                if (!tokenData.access_token) {
+                    throw new Error('Invalid response from token service: missing access_token');
+                }
+
+                // Store the new access token
+                stravaAccessToken = tokenData.access_token;
+
+                // Calculate and store expiry time (in milliseconds)
+                // If expires_in is not provided, default to 6 hours (21600 seconds)
+                const expiresIn = tokenData.expires_in || 21600;
+                stravaTokenExpiry = Date.now() + (expiresIn * 1000);
+
+                // Store tokens in localStorage
+                localStorage.setItem('stravaAccessToken', stravaAccessToken);
+                localStorage.setItem('stravaTokenExpiry', stravaTokenExpiry.toString());
+
+                console.log('Strava token refreshed successfully');
+                return stravaAccessToken;
+
+            } catch (error) {
+                console.error('Error refreshing Strava token:', error);
+                throw error;
+            }
         }
+        
+        // Function to verify the Strava token
+        async function verifyStravaToken() {
+            try {
+                // Test the token by making a request to get athlete info
+                const response = await fetch('https://www.strava.com/api/v3/athlete', {
+                    headers: {
+                        'Authorization': `Bearer ${stravaAccessToken}`
+                    }
+                });
+
+                if (!response.ok) {
+                    // If token is expired or invalid, try refreshing it
+                    if (response.status === 401) {
+                        await refreshStravaToken();
+                        return verifyStravaToken(); // Retry verification with new token
+                    }
+                    throw new Error(`Invalid token: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('Connected to Strava as:', data.firstname, data.lastname);
+                stravaConnected = true;
+
+                updateConnectionStatus(stravaConnectedStatus, true, `Connected as ${data.firstname} ${data.lastname}`);
+                checkBothConnected();
+                return true;
+            } catch (error) {
+                console.error('Error verifying Strava token:', error);
+                throw error;
+            }
+        }
+
 
 
         function updateConnectionStatus(element, isConnected, message) {
@@ -531,8 +608,6 @@
                         case 'mtb_easy':
                         case 'mtb':
                         case 'mtb_advanced':
-                            activityType = 'Mountain Biking';
-                            break;
                         case 'touringbicycle':
                         case 'racebike':
                             activityType = 'Cycling';
@@ -554,8 +629,6 @@
                         case 'mtb_easy':
                         case 'mtb':
                         case 'mtb_advanced':
-                            stravaActivityType = 'MountainBikeRide';
-                            break;
                         case 'touringbicycle':
                         case 'racebike':
                             stravaActivityType = 'Ride';
@@ -661,6 +734,8 @@
         }
 
 
+
+        // Update checkUploadStatus to handle token expiry
         async function checkUploadStatus(uploadId, statusElem) {
             // Poll the upload status until it completes or fails
             let attempts = 0;
@@ -669,11 +744,22 @@
             while (attempts < maxAttempts) {
                 attempts++;
                 try {
+                    // Check if token needs refreshing
+                    if (Date.now() > stravaTokenExpiry - 300000) {
+                        await refreshStravaToken();
+                    }
+
                     const statusResponse = await fetch(`https://www.strava.com/api/v3/uploads/${uploadId}`, {
                         headers: {
                             'Authorization': `Bearer ${stravaAccessToken}`
                         }
                     });
+
+                    if (!statusResponse.ok && statusResponse.status === 401) {
+                        // Token expired, refresh and try again
+                        await refreshStravaToken();
+                        continue; // Skip to next attempt with new token
+                    }
 
                     const statusData = await statusResponse.json();
 
@@ -841,6 +927,12 @@
             statusElem.textContent = "Preparing to sync...";
 
             try {
+                // Check if token needs refreshing (with 5 min buffer)
+                if (Date.now() > stravaTokenExpiry - 300000) {
+                    statusElem.textContent = "Refreshing Strava token...";
+                    await refreshStravaToken();
+                }
+
                 let gpxData = activity.gpxData;
 
                 // If we don't have GPX data stored, try to download it again
@@ -886,6 +978,13 @@
                     },
                     body: formData
                 });
+
+                if (!uploadResponse.ok && uploadResponse.status === 401) {
+                    // Token expired during upload, refresh and retry
+                    statusElem.textContent = "Refreshing token and retrying...";
+                    await refreshStravaToken();
+                    return syncToStrava(activityId, title); // Retry with new token
+                }
 
                 const uploadResult = await uploadResponse.json();
 
